@@ -33,10 +33,11 @@ import xarray
 
 import earth2mip.forecast_metrics_io
 import earth2mip.grid
-from earth2mip import _cli_utils, config, forecasts
+from earth2mip import _cli_utils, forecasts  # , config
 from earth2mip.datasets.hindcast import open_forecast
-from earth2mip.initial_conditions import hdf5
+from earth2mip.initial_conditions import cds  # , hdf5
 from earth2mip.lagged_ensembles import core
+from earth2mip.networks import get_model
 from earth2mip.xarray import metrics
 
 use_cupy = True
@@ -68,6 +69,8 @@ async def lagged_average_simple(
     ):
         initial_time = times[j] - k * time_step
         lead_time = time_step * k
+        # Remove the last channel from each array in the ensemble
+        ensemble = {key: value[:, :-1, :, :] for key, value in ensemble.items()}
 
         out = score(ensemble, obs)
 
@@ -81,8 +84,8 @@ async def lagged_average_simple(
                 value=len(ensemble),
             )
             for metric_name, darray in out.items():
-                assert darray.shape == (1, len(run_forecast.channel_names))  # noqa
-                for i in range(len(run_forecast.channel_names)):
+                assert darray.shape == (1, len(run_forecast.channel_names) - 1)  # noqa
+                for i in range(len(run_forecast.channel_names) - 1):
                     earth2mip.forecast_metrics_io.write_metric(
                         f,
                         initial_time=initial_time,
@@ -178,8 +181,10 @@ def main(args):
     times = _cli_utils.TimeRange.from_args(args)
     FIELDS = ["u10m", "v10m", "z500", "t2m", "t850"]
     pool = concurrent.futures.ThreadPoolExecutor()
-
-    data_source = hdf5.DataSource.from_path(args.data or config.ERA5_HDF5)
+    print(args)
+    time_loop = get_model(args.model, device="cuda:0")
+    data_source = cds.DataSource(time_loop.in_channel_names)
+    # data_source = hdf5.DataSource.from_path(args.data or config.ERA5_HDF5)
 
     try:
         torch.distributed.init_process_group(backend="nccl", init_method="env://")
@@ -229,7 +234,7 @@ def main(args):
         pool=pool,
         data_source=data_source,
         device="cpu",
-        channel_names=run_forecast.channel_names,
+        channel_names=time_loop.in_channel_names,
     )
     os.makedirs(args.output, exist_ok=True)
     output_path = os.path.join(args.output, f"{rank:03d}.csv")

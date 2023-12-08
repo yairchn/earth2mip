@@ -78,7 +78,7 @@ def gaussian_source(
 
 def main():
     device = DistributedManager().device
-    model = get_model("e2mip://pangu", device=device)
+    model = get_model("e2mip://graphcast_operational", device=device)
     model.source = partial(
         gaussian_source,
         model=model,
